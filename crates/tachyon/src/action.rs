@@ -16,6 +16,29 @@ use crate::{
     reddsa, serialization, value,
 };
 
+/// An authorized Tachyon action.
+#[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
+pub struct Action {
+    /// The action's effecting data.
+    pub descriptor: Descriptor,
+    /// Authorization over the transaction sighash.
+    pub signature: Signature,
+    /// The two tachygrams covered by the stamp for this action.
+    pub tachygrams: (Tachygram, Tachygram),
+}
+
+impl Action {
+    /// Digest the descriptor and unordered tachygrams covered by the stamp.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the descriptor's `cv` or `rk` is the identity point.
+    #[must_use]
+    pub fn digest(&self) -> ActionDigest {
+        self.descriptor.digest(self.tachygrams)
+    }
+}
+
 /// The effecting fields of an action, without its signature or tachygram pair.
 #[derive(Clone, Copy, Debug, PartialEq, TotalEq)]
 pub struct Descriptor {

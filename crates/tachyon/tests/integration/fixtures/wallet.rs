@@ -68,15 +68,15 @@ fn stamp_key(bundle: &Bundle<ProofStamp<stamp::Uncompressed>>) -> Vec<u8> {
     // The action digest binds each action's pair; the union does not.
     // Keep the collection passed to merge/lift in the key.
     key.extend_from_slice(&u32::try_from(bundle.actions.len()).unwrap().to_le_bytes());
-    for descriptor in &bundle.actions {
-        descriptor.write(&mut key).unwrap();
+    for action in &bundle.actions {
+        action.descriptor.write(&mut key).unwrap();
     }
     key.extend_from_slice(&<[u8; 32]>::from(bundle.fee.cv_feemax));
     key.extend_from_slice(&u64::from(bundle.fee.v_fee).to_le_bytes());
     for tachygram in bundle
-        .action_auth
+        .actions
         .iter()
-        .flat_map(|&(_, pair)| <[Tachygram; 2]>::from(pair))
+        .flat_map(|action| <[Tachygram; 2]>::from(action.tachygrams))
         .chain([bundle.fee_auth])
     {
         key.extend_from_slice(&Fp::from(tachygram).to_bytes());
@@ -104,8 +104,7 @@ pub(crate) fn merged(
                     &left
                         .actions
                         .iter()
-                        .copied()
-                        .zip(left.action_auth.iter().map(|&(_, pair)| pair))
+                        .map(|action| (action.descriptor, action.tachygrams))
                         .collect(),
                     &BTreeMap::from([(left.fee, left.fee_auth)]),
                 ),
@@ -115,8 +114,7 @@ pub(crate) fn merged(
                     &right
                         .actions
                         .iter()
-                        .copied()
-                        .zip(right.action_auth.iter().map(|&(_, pair)| pair))
+                        .map(|action| (action.descriptor, action.tachygrams))
                         .collect(),
                     &BTreeMap::from([(right.fee, right.fee_auth)]),
                 ),
@@ -150,8 +148,7 @@ pub(crate) fn lifted(
                 &bundle
                     .actions
                     .iter()
-                    .copied()
-                    .zip(bundle.action_auth.iter().map(|&(_, pair)| pair))
+                    .map(|action| (action.descriptor, action.tachygrams))
                     .collect(),
                 &BTreeMap::from([(bundle.fee, bundle.fee_auth)]),
                 vec![span],

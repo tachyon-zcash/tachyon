@@ -299,8 +299,7 @@ fn overlapping_stamps_cannot_aggregate() {
     let desc_a: BTreeMap<_, _> = alice_bundle
         .actions
         .iter()
-        .zip(&alice_bundle.action_auth)
-        .map(|(&desc, &(_, pair))| (desc, pair))
+        .map(|action| (action.descriptor, action.tachygrams))
         .collect();
     let fees_a = BTreeMap::from([(alice_bundle.fee, alice_bundle.fee_auth)]);
     let output_a = alice_bundle.stamp;
@@ -347,15 +346,13 @@ fn overlapping_stamps_cannot_aggregate() {
     let fixture_pairs = spend_a
         .actions
         .iter()
-        .zip(&spend_a.action_auth)
-        .map(|(&desc, &(_, pair))| (desc, pair))
+        .map(|action| (action.descriptor, action.tachygrams))
         .collect();
     let fixture_fees = BTreeMap::from([(spend_a.fee, spend_a.fee_auth)]);
     let reproven_actions = spend_b
         .actions
         .iter()
-        .zip(&spend_b.action_auth)
-        .map(|(&desc, &(_, pair))| (desc, pair))
+        .map(|action| (action.descriptor, action.tachygrams))
         .collect();
     let overlap_fees = BTreeMap::from([(spend_b.fee, spend_b.fee_auth)]);
 
@@ -545,8 +542,7 @@ fn lift_moves_the_anchor_and_keeps_the_proof_valid() {
     let descriptors: BTreeMap<_, _> = alice
         .actions
         .iter()
-        .zip(&alice.action_auth)
-        .map(|(&desc, &(_, pair))| (desc, pair))
+        .map(|action| (action.descriptor, action.tachygrams))
         .collect();
     let fees = BTreeMap::from([(alice.fee, alice.fee_auth)]);
     let fee_digest = alice.fee.digest(alice.fee_auth);
@@ -593,13 +589,12 @@ fn empty_lift_does_not_digest_invalid_coverage() {
     let rng = &mut StdRng::seed_from_u64(0);
     let (_, bundle) = alice(app);
     let mut invalid = bundle.clone().strip();
-    invalid.actions[0].cv = value::Trapdoor::ZERO.commit(value::Positive::ZERO);
-    invalid.fee.cv_feemax = invalid.actions[0].cv;
+    invalid.actions[0].descriptor.cv = value::Trapdoor::ZERO.commit(value::Positive::ZERO);
+    invalid.fee.cv_feemax = invalid.actions[0].descriptor.cv;
     let descriptors = invalid
         .actions
         .iter()
-        .zip(&invalid.action_auth)
-        .map(|(&desc, &(_, pair))| (desc, pair))
+        .map(|action| (action.descriptor, action.tachygrams))
         .collect();
     let fees = BTreeMap::from([(invalid.fee, invalid.fee_auth)]);
 
@@ -624,15 +619,13 @@ fn merge_after_lift() {
     let desc_a = bundle_a
         .actions
         .iter()
-        .zip(&bundle_a.action_auth)
-        .map(|(&desc, &(_, pair))| (desc, pair))
+        .map(|action| (action.descriptor, action.tachygrams))
         .collect();
     let fees_a = BTreeMap::from([(bundle_a.fee, bundle_a.fee_auth)]);
     let desc_b = bundle_b
         .actions
         .iter()
-        .zip(&bundle_b.action_auth)
-        .map(|(&desc, &(_, pair))| (desc, pair))
+        .map(|action| (action.descriptor, action.tachygrams))
         .collect();
     let fees_b = BTreeMap::from([(bundle_b.fee, bundle_b.fee_auth)]);
 
@@ -676,11 +669,10 @@ fn mismatched_merge_descriptors_fail_verification() {
     let desc_a = bundle_a
         .actions
         .iter()
-        .zip(&bundle_a.action_auth)
-        .map(|(&desc, &(_, pair))| (desc, pair))
+        .map(|action| (action.descriptor, action.tachygrams))
         .collect();
     let fees_a = BTreeMap::from([(bundle_a.fee, bundle_a.fee_auth)]);
-    let desc_b = BTreeMap::from([(foreign, bundle_b.action_auth[0].1)]);
+    let desc_b = BTreeMap::from([(foreign, bundle_b.actions[0].tachygrams)]);
     let fees_b = BTreeMap::from([(bundle_b.fee, bundle_b.fee_auth)]);
 
     let digests: Vec<ActionDigest> = bundle_a
@@ -712,7 +704,7 @@ fn mismatched_merge_descriptors_fail_verification() {
         .0
         .into_iter()
         .chain([
-            foreign.digest(bundle_b.action_auth[0].1),
+            foreign.digest(bundle_b.actions[0].tachygrams),
             bundle_b.fee.digest(bundle_b.fee_auth),
         ])
         .collect();

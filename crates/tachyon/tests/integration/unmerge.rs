@@ -39,8 +39,7 @@ fn unmerge_removes_a_divisor_across_merge_boundaries() {
             bundle
                 .actions
                 .iter()
-                .zip(&bundle.action_auth)
-                .map(|(&desc, &(_, pair))| (desc, pair))
+                .map(|action| (action.descriptor, action.tachygrams))
                 .collect()
         });
     let [alice_fees, bob_fees, carol_fees] =
@@ -150,8 +149,7 @@ fn unmerge_hostless_quotient_fails_coverage_on_its_host() {
             bundle
                 .actions
                 .iter()
-                .zip(&bundle.action_auth)
-                .map(|(&desc, &(_, pair))| (desc, pair))
+                .map(|action| (action.descriptor, action.tachygrams))
                 .collect()
         });
     let [alice_fees, bob_fees, carol_fees] =
@@ -272,8 +270,7 @@ fn unmerge_by_a_lifted_divisor() {
         bundle
             .actions
             .iter()
-            .zip(&bundle.action_auth)
-            .map(|(&desc, &(_, pair))| (desc, pair))
+            .map(|action| (action.descriptor, action.tachygrams))
             .collect()
     });
     let early_fees = BTreeMap::from([(earlier.fee, earlier.fee_auth)]);
@@ -320,8 +317,7 @@ fn unmerge_by_itself_leaves_no_leaves() {
     let desc = alice
         .actions
         .iter()
-        .zip(&alice.action_auth)
-        .map(|(&desc, &(_, pair))| (desc, pair))
+        .map(|action| (action.descriptor, action.tachygrams))
         .collect();
     let fees = BTreeMap::from([(alice.fee, alice.fee_auth)]);
 
@@ -379,22 +375,20 @@ fn unmerge_splitting_a_bundle() {
     let kept_index = whole
         .actions
         .iter()
-        .position(|&descriptor| descriptor == kept_descriptor)
+        .position(|action| action.descriptor == kept_descriptor)
         .unwrap();
     let kept_digest = whole.verify_covered(&[]).unwrap().0[kept_index];
 
     let part_desc = alice
         .actions
         .iter()
-        .zip(&alice.action_auth)
-        .map(|(&desc, &(_, pair))| (desc, pair))
+        .map(|action| (action.descriptor, action.tachygrams))
         .collect();
     let part_fees = BTreeMap::from([(whole.fee, whole.fee_auth)]);
     let whole_desc = whole
         .actions
         .iter()
-        .zip(&whole.action_auth)
-        .map(|(&desc, &(_, pair))| (desc, pair))
+        .map(|action| (action.descriptor, action.tachygrams))
         .collect();
     let whole_fees = BTreeMap::from([(whole.fee, whole.fee_auth)]);
     let part_txid = mock_txid(&alice);
@@ -465,8 +459,7 @@ fn unmerge_rejects_a_reproven_note_as_divisor() {
                 &original
                     .actions
                     .iter()
-                    .zip(&original.action_auth)
-                    .map(|(&desc, &(_, pair))| (desc, pair))
+                    .map(|action| (action.descriptor, action.tachygrams))
                     .collect(),
                 &BTreeMap::from([(original.fee, original.fee_auth)]),
             ),
@@ -476,8 +469,7 @@ fn unmerge_rejects_a_reproven_note_as_divisor() {
                 &other
                     .actions
                     .iter()
-                    .zip(&other.action_auth)
-                    .map(|(&desc, &(_, pair))| (desc, pair))
+                    .map(|action| (action.descriptor, action.tachygrams))
                     .collect(),
                 &BTreeMap::from([(other.fee, other.fee_auth)]),
             ),
@@ -487,8 +479,7 @@ fn unmerge_rejects_a_reproven_note_as_divisor() {
     let divisor_desc = reproven
         .actions
         .iter()
-        .zip(&reproven.action_auth)
-        .map(|(&desc, &(_, pair))| (desc, pair))
+        .map(|action| (action.descriptor, action.tachygrams))
         .collect();
     let divisor_fees = BTreeMap::from([(reproven.fee, reproven.fee_auth)]);
     let (original_digests, _) = original.verify_covered(&[]).unwrap();
@@ -505,8 +496,7 @@ fn unmerge_rejects_a_reproven_note_as_divisor() {
                         bundle
                             .actions
                             .iter()
-                            .zip(&bundle.action_auth)
-                            .map(|(&desc, &(_, pair))| (desc, pair))
+                            .map(|action| (action.descriptor, action.tachygrams))
                     })
                     .collect(),
                 &BTreeMap::from([
@@ -537,14 +527,14 @@ fn unmerge_binds_its_sets() {
     let alice_bob = merged(app, &alice, &bob).stamp;
 
     let alice_members = alice
-        .action_auth
+        .actions
         .iter()
-        .flat_map(|&(_, pair)| <[Tachygram; 2]>::from(pair))
+        .flat_map(|action| <[Tachygram; 2]>::from(action.tachygrams))
         .chain([alice.fee_auth]);
     let bob_members = bob
-        .action_auth
+        .actions
         .iter()
-        .flat_map(|&(_, pair)| <[Tachygram; 2]>::from(pair))
+        .flat_map(|action| <[Tachygram; 2]>::from(action.tachygrams))
         .chain([bob.fee_auth]);
     let alice_bob_tachygrams: TachygramSetPoly =
         alice_members.clone().chain(bob_members.clone()).collect();
