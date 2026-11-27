@@ -37,6 +37,11 @@ classDiagram
         anchor: Anchor
         tachygram_set: TachygramSetCommit
         proof: stamp::Proof
+        lift()
+        compress()
+    }
+    class AggregatorProof {
+        lift()
         merge()
         unmerge()
         compress()
@@ -44,14 +49,16 @@ classDiagram
     Bundle "1" *-- "0..*" Action : actions
     Bundle "1" *-- "0..1" Stamp : stamp
     Stamp --> "0..*" Bundle : adjuncts
+    Bundle ..> AggregatorProof : decompress
 ```
 
 A stamp's adjuncts are the other bundles it covers, listed by transaction id.
-`merge` combines two stamps into one, and `unmerge` divides one back out.
 `strip` removes the stamp from a bundle that another stamp covers.
 
-In the crate today, `merge` and `unmerge` take uncompressed stamps.
-`compress` rerandomizes the stamp's proof and compresses it for publication.
+A wallet proves and lifts its own stamp, then `compress` rerandomizes the
+proof and compresses it for publication. An aggregator `decompress`es a
+published wallet bundle into an `AggregatorProof`, where `merge` combines two
+stamps into one and `unmerge` divides one back out, and compresses the result.
 
 Each bundle action carries its descriptor (`cv` and `rk`), its signature,
 and its tachygram pair. The book's [Bundles](book/src/bundle.md) chapter
