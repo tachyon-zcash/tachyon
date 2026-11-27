@@ -14,7 +14,7 @@ use super::{
     proof::{HEADER_SIZE, transaction::Transaction},
 };
 use crate::{
-    ActionDigest, ActionSetCommit, ActionSetPoly, Anchor, TachygramSetCommit,
+    ActionDigest, ActionSetCommit, Anchor, TachygramSetCommit,
     pasta::{EpAffine, EqAffine, Fp},
 };
 
@@ -53,11 +53,7 @@ impl Stamp<CompressedProof<Profiled<Pasta, Aggregator<HEADER_SIZE>>>> {
         >,
         digests: &[ActionDigest],
     ) -> ragu::Result<bool> {
-        let header = (
-            ActionSetPoly::try_from_roots(digests.iter().copied())?.commit(),
-            self.tachygram_set,
-            self.anchor,
-        );
-        verified_transaction(app, &self.proof, header)
+        let actions = super::action_commit(digests.iter().copied())?;
+        verified_transaction(app, &self.proof, (actions, self.tachygram_set, self.anchor))
     }
 }

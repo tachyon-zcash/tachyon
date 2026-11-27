@@ -478,7 +478,7 @@ fn read_rejects_wrong_proof_size() {
         let mut reader = bytes.as_slice();
         let err = Stamp::<stamp::Uncompressed>::read(&mut reader).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-        assert_eq!(reader.len(), proof.len() - compressed_size);
+        assert_eq!(reader.len(), proof.len());
     }
 
     let compressed = stamp.compress(rng, app).unwrap();
@@ -498,7 +498,7 @@ fn read_rejects_wrong_proof_size() {
             .unwrap();
         let err = Stamp::<stamp::Compressed>::read(&*bytes).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-        assert_eq!(err.to_string(), "proof size exceeds transport bound");
+        assert_eq!(err.to_string(), "unexpected proof length");
     }
 }
 
