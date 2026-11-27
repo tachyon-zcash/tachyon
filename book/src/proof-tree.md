@@ -76,6 +76,8 @@ so $a$ must be the start or a member. Since $M$ records no root order, both step
 `TransactionLift` takes its output action set from the prover and equates it at $\zeta$ with the input stamp's.
 Wallets use spans published by consensus and sync services during the epoch and build their own for subsequent stamps.
 
+A wallet-built span can serve many transactions. Its builder compresses it, and an aggregator imports it at aggregator rank, rebuilding both span polynomials from history: the member anchors, and for a seed the absorbed stamp's tachygrams. `AnchorSpanFuse` and `TransactionLift` then run at aggregator rank on the imported span.
+
 On publication the bundle carries each action's descriptor and tachygram pair, the fee descriptor, the fee change commitment, the anchor, and the stamp proof. The fee descriptor and fee change commitment are separate inputs to the fee digest.
 Validators reconstruct the action-set and tachygram-set commitments from those published bundles, check the proof against the reconstructed values, and confirm the anchor against the consensus chain.
 

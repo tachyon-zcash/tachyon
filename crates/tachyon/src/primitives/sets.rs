@@ -140,6 +140,11 @@ impl AnchorSetPoly {
                 .to_affine(),
         )
     }
+
+    /// Coefficients in ascending degree through the leading one.
+    pub(crate) fn coefficients(&self) -> Vec<Fp> {
+        monic_coefficients(&self.0)
+    }
 }
 
 impl TachygramSetPoly {
