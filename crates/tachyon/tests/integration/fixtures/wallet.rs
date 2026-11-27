@@ -630,7 +630,8 @@ impl WalletSim {
                 .fuse(
                     rng,
                     spendable::SpendableInit,
-                    witness::spendable_init((*deriv.data(), ()), anchor_prev, &creation_tgs, epoch),
+                    witness::spendable_init((*deriv.data(), ()), anchor_prev, &creation_tgs, epoch)
+                        .unwrap(),
                     deriv,
                     app.bootstrap_proof().clone().carry::<()>(()),
                 )

@@ -167,7 +167,7 @@ impl QrIntakeEntry {
             .fuse(
                 rng,
                 qr::QrIntakeSplit,
-                witness::qr_intake_split((*self.pcd.data(), ()), &split),
+                witness::qr_intake_split((*self.pcd.data(), ()), &split).unwrap(),
                 self.pcd,
                 app.bootstrap_proof().clone().carry::<()>(()),
             )
@@ -264,7 +264,7 @@ impl QrIntakeEntry {
 }
 
 pub(crate) fn scaled_qr_contents(members: &[Tachygram], scale: Fp) -> TachygramSetPoly {
-    let monic: TachygramSetPoly = members.iter().copied().collect();
+    let monic = TachygramSetPoly::try_from_roots(members.iter().copied()).unwrap();
     let mut poly: Polynomial<Fp, WalletRank> = monic.into();
     poly.scale(scale);
     TachygramSetPoly::arbitrary(poly)

@@ -66,7 +66,7 @@ fn qr_stamp_intake_seed_rejects_an_empty_stamp() {
                     EpochIndex::new(3),
                     discriminant,
                     &[],
-                ),
+                ).unwrap(),
             )
             .err(),
         Some(ragu::Error::InvalidWitness(err)) if err.to_string() == "division by zero"
@@ -93,10 +93,8 @@ fn qr_intake_split_partitions_the_contents_by_class() {
 
     let split = pool.qr_split(app, span0, disc, Fp::ZERO, 0);
 
-    let non_residue_commit = non_residue
-        .iter()
-        .copied()
-        .collect::<TachygramSetPoly>()
+    let non_residue_commit = TachygramSetPoly::try_from_roots(non_residue.iter().copied())
+        .unwrap()
         .commit();
     let non_residue_hash =
         TachygramSetBridge::from(app.bridge_hash(non_residue_commit.into()).unwrap());
@@ -115,17 +113,13 @@ fn qr_intake_split_partitions_the_contents_by_class() {
         split.commitments()[..2],
         [
             EqAffine::from(
-                residue
-                    .iter()
-                    .copied()
-                    .collect::<TachygramSetPoly>()
+                TachygramSetPoly::try_from_roots(residue.iter().copied())
+                    .unwrap()
                     .commit()
             ),
             EqAffine::from(
-                non_residue
-                    .iter()
-                    .copied()
-                    .collect::<TachygramSetPoly>()
+                TachygramSetPoly::try_from_roots(non_residue.iter().copied())
+                    .unwrap()
                     .commit()
             ),
         ]
@@ -145,7 +139,7 @@ fn qr_intake_split_rejects_a_forged_partition() {
     let members = root.members;
 
     let split = disc.split(&members);
-    let (half, _residue) = witness::qr_intake_split((*root.pcd.data(), ()), &split);
+    let (half, _residue) = witness::qr_intake_split((*root.pcd.data(), ()), &split).unwrap();
     let split_witness = (half.clone(), half);
     let (forged, ()) = app
         .fuse(
@@ -179,7 +173,7 @@ fn qr_intake_split_rejects_an_empty_intake() {
             .fuse(
                 rng,
                 qr::QrIntakeSplit,
-                witness::qr_intake_split((*intake.pcd.data(), ()), &split),
+                witness::qr_intake_split((*intake.pcd.data(), ()), &split).unwrap(),
                 intake.pcd,
                 app.bootstrap_proof().clone().carry::<()>(()),
             )
@@ -208,10 +202,11 @@ fn qr_side_descend_rejects_a_split_into_the_same_set() {
         .seed(
             rng,
             qr::QrStampIntakeSeed,
-            witness::qr_stamp_intake_seed(((), ()), start, epoch, discriminant, &[member, member]),
+            witness::qr_stamp_intake_seed(((), ()), start, epoch, discriminant, &[member, member])
+                .unwrap(),
         )
         .unwrap();
-    let half = TachygramSetPoly::from_iter([member]);
+    let half = TachygramSetPoly::try_from_roots([member]).unwrap();
     let (sides, ()) = app
         .fuse(
             rng,
@@ -565,7 +560,7 @@ fn oversized_qr_bucket_seals_refuses_its_members_and_opens_from_a_tree() {
     assert_eq!(bucket_profile.depth, u32::BITS);
     assert_eq!(
         bucket.pcd.commitments()[1],
-        EqAffine::from(members.into_iter().collect::<TachygramSetPoly>().commit())
+        EqAffine::from(TachygramSetPoly::try_from_roots(members).unwrap().commit())
     );
     for member in [exceptional, companion] {
         let witness = witness::qr_unspent_init((*bucket.pcd.data(), ()), Tachygram::from(member));
@@ -604,7 +599,8 @@ fn qr_side_select_checks_the_exceptional_value_at_its_depth() {
             .seed(
                 rng,
                 qr::QrStampIntakeSeed,
-                witness::qr_stamp_intake_seed(((), ()), start, epoch, discriminant, &members),
+                witness::qr_stamp_intake_seed(((), ()), start, epoch, discriminant, &members)
+                    .unwrap(),
             )
             .unwrap();
 
@@ -630,7 +626,7 @@ fn qr_side_select_checks_the_exceptional_value_at_its_depth() {
             .fuse(
                 rng,
                 qr::QrIntakeSplit,
-                witness::qr_intake_split((*intake.pcd.data(), ()), &split),
+                witness::qr_intake_split((*intake.pcd.data(), ()), &split).unwrap(),
                 intake.pcd.clone(),
                 app.bootstrap_proof().clone().carry::<()>(()),
             )
@@ -654,8 +650,8 @@ fn qr_side_select_checks_the_exceptional_value_at_its_depth() {
                 *member != exceptional && class == QrClass::Residue
             });
         let split_witness = (
-            non_residue.into_iter().collect(),
-            residue.into_iter().collect(),
+            TachygramSetPoly::try_from_roots(non_residue).unwrap(),
+            TachygramSetPoly::try_from_roots(residue).unwrap(),
         );
         let (sides, ()) = app
             .fuse(
@@ -698,7 +694,8 @@ fn qr_side_descend_carries_each_side_one_level_down() {
                 exceptional_epoch,
                 exceptional_discriminant,
                 &exceptional_members,
-            ),
+            )
+            .unwrap(),
         )
         .unwrap();
     let exceptional_data = *exceptional_root.data();
@@ -707,7 +704,7 @@ fn qr_side_descend_carries_each_side_one_level_down() {
         .fuse(
             rng,
             qr::QrIntakeSplit,
-            witness::qr_intake_split((*exceptional_root.data(), ()), &exceptional_split),
+            witness::qr_intake_split((*exceptional_root.data(), ()), &exceptional_split).unwrap(),
             exceptional_root,
             app.bootstrap_proof().clone().carry::<()>(()),
         )
@@ -778,10 +775,8 @@ fn qr_side_descend_carries_each_side_one_level_down() {
             assert_eq!(
                 child.commitments()[1],
                 EqAffine::from(
-                    side_members
-                        .iter()
-                        .copied()
-                        .collect::<TachygramSetPoly>()
+                    TachygramSetPoly::try_from_roots(side_members.iter().copied())
+                        .unwrap()
                         .commit()
                 )
             );
@@ -839,10 +834,10 @@ fn qr_side_descend_matches_selection_metadata() {
         .seed(
             rng,
             qr::QrStampIntakeSeed,
-            witness::qr_stamp_intake_seed(((), ()), start, epoch, discriminant, &members),
+            witness::qr_stamp_intake_seed(((), ()), start, epoch, discriminant, &members).unwrap(),
         )
         .unwrap();
-    let (non_residue, residue) = witness::qr_intake_split((*root.data(), ()), &split);
+    let (non_residue, residue) = witness::qr_intake_split((*root.data(), ()), &split).unwrap();
     let (sides, ()) = app
         .fuse(
             rng,
@@ -894,7 +889,8 @@ fn qr_side_descend_matches_selection_metadata() {
                     other_epoch,
                     other_discriminant,
                     other_members,
-                ),
+                )
+                .unwrap(),
             )
             .unwrap();
         let foreign_split = other_discriminant.split(other_members);
@@ -902,7 +898,7 @@ fn qr_side_descend_matches_selection_metadata() {
             .fuse(
                 rng,
                 qr::QrIntakeSplit,
-                witness::qr_intake_split((*foreign_root.data(), ()), &foreign_split),
+                witness::qr_intake_split((*foreign_root.data(), ()), &foreign_split).unwrap(),
                 foreign_root,
                 app.bootstrap_proof().clone().carry::<()>(()),
             )
@@ -986,8 +982,8 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
     let smuggled = short_residue.pop().unwrap();
     padded_non_residue.push(smuggled);
     let split_witness = (
-        padded_non_residue.iter().copied().collect(),
-        short_residue.iter().copied().collect(),
+        TachygramSetPoly::try_from_roots(padded_non_residue.iter().copied()).unwrap(),
+        TachygramSetPoly::try_from_roots(short_residue.iter().copied()).unwrap(),
     );
     let (sides, ()) = app
         .fuse(
@@ -1052,10 +1048,8 @@ fn qr_side_descend_rejects_a_child_short_of_a_member() {
     assert_eq!(
         child.commitments()[1],
         EqAffine::from(
-            padded_non_residue
-                .iter()
-                .copied()
-                .collect::<TachygramSetPoly>()
+            TachygramSetPoly::try_from_roots(padded_non_residue.iter().copied())
+                .unwrap()
                 .commit()
         )
     );
@@ -1076,7 +1070,7 @@ fn qr_side_descend_refuses_a_full_register() {
     assert_eq!(profile, qr_profile_of(absent, disc, u32::BITS));
 
     let split = disc.at(profile.depth).split(&intake.members);
-    let split_witness = witness::qr_intake_split((*intake.pcd.data(), ()), &split);
+    let split_witness = witness::qr_intake_split((*intake.pcd.data(), ()), &split).unwrap();
     let (sides, ()) = app
         .fuse(
             rng,
@@ -1121,7 +1115,8 @@ fn qr_intake_merge_joins_two_spans() {
         .seed(
             rng,
             qr::QrStampIntakeSeed,
-            witness::qr_stamp_intake_seed(((), ()), start, epoch, discriminant, &left_members),
+            witness::qr_stamp_intake_seed(((), ()), start, epoch, discriminant, &left_members)
+                .unwrap(),
         )
         .unwrap();
     let junction = left.data().2;
@@ -1129,22 +1124,22 @@ fn qr_intake_merge_joins_two_spans() {
         .seed(
             rng,
             qr::QrStampIntakeSeed,
-            witness::qr_stamp_intake_seed(((), ()), junction, epoch, discriminant, &right_members),
+            witness::qr_stamp_intake_seed(((), ()), junction, epoch, discriminant, &right_members)
+                .unwrap(),
         )
         .unwrap();
     let end = right.data().2;
 
     let witness =
-        witness::qr_intake_merge((*left.data(), *right.data()), &left_members, &right_members);
+        witness::qr_intake_merge((*left.data(), *right.data()), &left_members, &right_members)
+            .unwrap();
     let (merged, ()) = app
         .fuse(rng, qr::QrIntakeMerge, witness, left, right)
         .unwrap();
 
-    let union = left_members
-        .iter()
-        .chain(&right_members)
-        .copied()
-        .collect::<TachygramSetPoly>();
+    let union =
+        TachygramSetPoly::try_from_roots(left_members.iter().chain(&right_members).copied())
+            .unwrap();
     assert_eq!(
         *merged.data(),
         (epoch, start, end, discriminant, QrProfile::ROOT)
@@ -1166,7 +1161,8 @@ fn qr_intake_merge_rejects_mismatched_inputs() {
         .seed(
             rng,
             qr::QrStampIntakeSeed,
-            witness::qr_stamp_intake_seed(((), ()), start, epoch, discriminant, &left_members),
+            witness::qr_stamp_intake_seed(((), ()), start, epoch, discriminant, &left_members)
+                .unwrap(),
         )
         .unwrap();
     let junction = left.data().2;
@@ -1201,7 +1197,8 @@ fn qr_intake_merge_rejects_mismatched_inputs() {
                     right_epoch,
                     right_discriminant,
                     &right_members,
-                ),
+                )
+                .unwrap(),
             )
             .unwrap();
         let (forged, ()) = app
@@ -1212,7 +1209,8 @@ fn qr_intake_merge_rejects_mismatched_inputs() {
                     (*left.data(), *right.data()),
                     &left_members,
                     &right_members,
-                ),
+                )
+                .unwrap(),
                 left.clone(),
                 right,
             )
@@ -1227,7 +1225,8 @@ fn qr_intake_merge_rejects_mismatched_inputs() {
         .seed(
             rng,
             qr::QrStampIntakeSeed,
-            witness::qr_stamp_intake_seed(((), ()), junction, epoch, discriminant, &right_members),
+            witness::qr_stamp_intake_seed(((), ()), junction, epoch, discriminant, &right_members)
+                .unwrap(),
         )
         .unwrap();
     let partition = discriminant.split(&left_members);
@@ -1235,7 +1234,7 @@ fn qr_intake_merge_rejects_mismatched_inputs() {
         .fuse(
             rng,
             qr::QrIntakeSplit,
-            witness::qr_intake_split((*left.data(), ()), &partition),
+            witness::qr_intake_split((*left.data(), ()), &partition).unwrap(),
             left,
             app.bootstrap_proof().clone().carry::<()>(()),
         )
@@ -1274,7 +1273,8 @@ fn qr_intake_merge_rejects_mismatched_inputs() {
                 (*deeper.data(), *right.data()),
                 &deeper_members,
                 &right_members,
-            ),
+            )
+            .unwrap(),
             deeper,
             right,
         )
@@ -1358,7 +1358,11 @@ fn qr_empty_intake_seed_spans_a_stampless_epoch() {
     assert_eq!(profile, QrProfile::ROOT);
     assert_eq!(
         bucket.pcd.commitments()[1],
-        EqAffine::from(iter::empty().collect::<TachygramSetPoly>().commit())
+        EqAffine::from(
+            TachygramSetPoly::try_from_roots(iter::empty())
+                .unwrap()
+                .commit()
+        )
     );
 
     let left = pool.unspent(app, (epoch2, epoch3), |_| nf2);
@@ -1527,7 +1531,8 @@ fn qr_spendable_init_rejects_a_bucket_that_does_not_match_the_segment() {
                 epoch1,
                 discriminant,
                 &members,
-            ),
+            )
+            .unwrap(),
         )
         .unwrap();
     let elsewhere = QrIntakeEntry {

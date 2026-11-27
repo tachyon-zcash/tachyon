@@ -24,13 +24,11 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
         .seed(
             rng,
             summary::SummarySeed,
-            witness::summary_seed(((), ()), start, epoch, &stamp_a),
+            witness::summary_seed(((), ()), start, epoch, &stamp_a).unwrap(),
         )
         .unwrap();
-    let commit_a = stamp_a
-        .iter()
-        .copied()
-        .collect::<TachygramSetPoly>()
+    let commit_a = TachygramSetPoly::try_from_roots(stamp_a.iter().copied())
+        .unwrap()
         .commit();
     assert_eq!(
         *seeded.data(),
@@ -41,14 +39,14 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
     let foreign: [Tachygram; 3] = array::from_fn(|_| Tachygram::random(rng));
     for (advance_witness, expected) in [
         (
-            witness::summary_advance((*seeded.data(), ()), &foreign, &stamp_b),
+            witness::summary_advance((*seeded.data(), ()), &foreign, &stamp_b).unwrap(),
             "an accumulator over foreign tachygrams",
         ),
         (
             {
                 let mut witness =
-                    witness::summary_advance((*seeded.data(), ()), &stamp_a, &stamp_b);
-                witness.0 = stamp_a.iter().copied().collect();
+                    witness::summary_advance((*seeded.data(), ()), &stamp_a, &stamp_b).unwrap();
+                witness.0 = TachygramSetPoly::try_from_roots(stamp_a).unwrap();
                 witness
             },
             "an accumulator that omits the stamp",
@@ -73,22 +71,17 @@ fn summary_advance_folds_stamp_into_accumulator_and_anchor() {
         .fuse(
             rng,
             summary::SummaryAdvance,
-            witness::summary_advance((*seeded.data(), ()), &stamp_a, &stamp_b),
+            witness::summary_advance((*seeded.data(), ()), &stamp_a, &stamp_b).unwrap(),
             seeded,
             app.bootstrap_proof().clone().carry::<()>(()),
         )
         .unwrap();
 
-    let commit_b = stamp_b
-        .iter()
-        .copied()
-        .collect::<TachygramSetPoly>()
+    let commit_b = TachygramSetPoly::try_from_roots(stamp_b.iter().copied())
+        .unwrap()
         .commit();
-    let union = stamp_a
-        .iter()
-        .chain(stamp_b.iter())
-        .copied()
-        .collect::<TachygramSetPoly>()
+    let union = TachygramSetPoly::try_from_roots(stamp_a.iter().chain(stamp_b.iter()).copied())
+        .unwrap()
         .commit();
     let expected_end = start
         .next_stamp(epoch, &commit_a)
@@ -111,7 +104,7 @@ fn summary_seed_rejects_empty_stamp() {
             .seed(
                 rng,
                 summary::SummarySeed,
-                witness::summary_seed(((), ()), start, EpochIndex::new(3), &[]),
+                witness::summary_seed(((), ()), start, EpochIndex::new(3), &[]).unwrap(),
             )
             .err(),
         Some(ragu::Error::InvalidWitness(err)) if err.to_string() == "division by zero"

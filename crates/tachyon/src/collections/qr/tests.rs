@@ -21,7 +21,7 @@ fn verify_side(
     u: &Polynomial<Fp, WalletRank>,
     h: &Polynomial<Fp, WalletRank>,
 ) {
-    let q = multiset::encode(points.iter().map(|&(abscissa, _)| abscissa));
+    let q = multiset::try_encode(points.iter().map(|&(abscissa, _)| abscissa)).unwrap();
     let [u_degree, q_degree, h_degree] = [u, &q, h].map(|poly| {
         poly.iter_stored_coeffs()
             .last()

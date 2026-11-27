@@ -115,7 +115,7 @@ fn qr_bucket_seal_rejects_substituted_contents() {
         .seed(
             rng,
             SummarySeed,
-            witness::summary_seed(((), ()), Anchor::default(), epoch, &members),
+            witness::summary_seed(((), ()), Anchor::default(), epoch, &members).unwrap(),
         )
         .unwrap();
     let empty = app.bootstrap_proof().clone().carry::<()>(());

@@ -475,7 +475,7 @@ break verify_signatures
 end
 break verify_covered
     note over Consensus: the adjuncts are the block's stripped bundles named by txid in adjuncts
-    note over Consensus: 2N + B <= 8191 for N covered actions and B covered bundles
+    note over Consensus: 2N + B <= 16383 for N covered actions and B covered bundles
     note over Consensus: no duplicate action descriptor, fee descriptor or tachygram across covered bundles
     note over Consensus: d_i = Poseidon_ActionDg(x(cv_i), y(cv_i), x(rk_i), y(rk_i), tg_i0 + tg_i1, tg_i0 * tg_i1)
     note over Consensus: d_fee_j = Poseidon_FeeDg(x(cv_feemax_j), y(cv_feemax_j), fee_j, cm_chg_j)

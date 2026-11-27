@@ -4,19 +4,22 @@
 //!
 //! An accumulator $\sum_j c_j G_j$ weights host generators by polynomial
 //! coefficients without a blinding term. No discrete-log relation is known
-//! among the host generators, so at the slot limit of $2^{13}$ coefficients,
-//! each accumulator determines its polynomial and hence, for a [multiset],
-//! its fewer than $2^{13}$ members.
+//! among the host generators. At wallet rank $r$, these wrappers hold at most
+//! $2^r$ coefficients. Each accumulator determines its polynomial and hence,
+//! for a [multiset], its fewer than $2^r$ members.
 //! The wrappers accept arbitrary polynomials and points.
 
-use core::iter;
+use alloc::vec;
 
 use corez::io::{self, Read, Write};
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
 use ragu::{
     Cycle as _, Polynomial, WalletRank,
     pasta::Pasta,
-    udon::curve::{Affine as _, Projective as _},
+    udon::{
+        curve::{Affine as _, Projective as _},
+        field::Field as _,
+    },
 };
 
 use super::{ActionDigest, Anchor, PolySlot, Tachygram};
@@ -75,7 +78,7 @@ impl TachygramSetCommit {
 impl Default for TachygramSetCommit {
     /// A commitment to an empty set.
     fn default() -> Self {
-        iter::empty().collect::<TachygramSetPoly>().commit()
+        TachygramSetPoly(Polynomial::from_coeffs(vec![Fp::ONE])).commit()
     }
 }
 
@@ -108,6 +111,14 @@ impl AnchorSetPoly {
     /// Names this polynomial in a header that carries one.
     pub const SLOT: PolySlot<Self> = PolySlot::new();
 
+    /// Encodes the span members as roots of a monic wallet-rank polynomial.
+    ///
+    /// # Errors
+    /// Returns a witness error if the polynomial exceeds the rank's capacity.
+    pub fn try_from_roots(roots: impl IntoIterator<Item = Anchor>) -> ragu::Result<Self> {
+        multiset::try_encode(roots.into_iter().map(Fp::from)).map(Self)
+    }
+
     /// Deterministic (untrapdoored) commitment to the set polynomial.
     #[must_use]
     pub fn commit(&self) -> AnchorSetCommit {
@@ -119,15 +130,17 @@ impl AnchorSetPoly {
     }
 }
 
-impl FromIterator<Anchor> for AnchorSetPoly {
-    fn from_iter<I: IntoIterator<Item = Anchor>>(iter: I) -> Self {
-        Self(multiset::encode(iter.into_iter().map(Fp::from)))
-    }
-}
-
 impl TachygramSetPoly {
     /// Names this polynomial in a header that carries one.
     pub const SLOT: PolySlot<Self> = PolySlot::new();
+
+    /// Encodes the tachygrams as roots of a monic wallet-rank polynomial.
+    ///
+    /// # Errors
+    /// Returns a witness error if the polynomial exceeds the rank's capacity.
+    pub fn try_from_roots(roots: impl IntoIterator<Item = Tachygram>) -> ragu::Result<Self> {
+        multiset::try_encode(roots.into_iter().map(Fp::from)).map(Self)
+    }
 
     /// Wraps an arbitrary polynomial, skipping set encoding, to exercise step
     /// inputs.
@@ -152,6 +165,14 @@ impl ActionSetPoly {
     /// Names this polynomial in a header that carries one.
     pub const SLOT: PolySlot<Self> = PolySlot::new();
 
+    /// Encodes the digests as roots of a monic wallet-rank polynomial.
+    ///
+    /// # Errors
+    /// Returns a witness error if the polynomial exceeds the rank's capacity.
+    pub fn try_from_roots(roots: impl IntoIterator<Item = ActionDigest>) -> ragu::Result<Self> {
+        multiset::try_encode(roots.into_iter().map(Fp::from)).map(Self)
+    }
+
     /// Deterministic (untrapdoored) commitment to the set polynomial.
     #[must_use]
     pub fn commit(&self) -> ActionSetCommit {
@@ -163,14 +184,23 @@ impl ActionSetPoly {
     }
 }
 
-impl FromIterator<ActionDigest> for ActionSetPoly {
-    fn from_iter<I: IntoIterator<Item = ActionDigest>>(iter: I) -> Self {
-        Self(multiset::encode(iter.into_iter().map(Fp::from)))
+impl From<[ActionDigest; 1]> for ActionSetPoly {
+    fn from([root]: [ActionDigest; 1]) -> Self {
+        Self(Polynomial::from_coeffs(vec![-Fp::from(root), Fp::ONE]))
     }
 }
-
-impl FromIterator<Tachygram> for TachygramSetPoly {
-    fn from_iter<I: IntoIterator<Item = Tachygram>>(iter: I) -> Self {
-        Self(multiset::encode(iter.into_iter().map(Fp::from)))
+impl From<[Tachygram; 1]> for TachygramSetPoly {
+    fn from([root]: [Tachygram; 1]) -> Self {
+        Self(Polynomial::from_coeffs(vec![-Fp::from(root), Fp::ONE]))
+    }
+}
+impl From<[Tachygram; 2]> for TachygramSetPoly {
+    fn from(roots: [Tachygram; 2]) -> Self {
+        let [left, right] = roots.map(Fp::from);
+        Self(Polynomial::from_coeffs(vec![
+            left * right,
+            -(left + right),
+            Fp::ONE,
+        ]))
     }
 }

@@ -12,9 +12,15 @@ fn bridge_hash_matches_application() {
     let app = new_application().unwrap();
     for commitment in [
         TachygramSetCommit::default(),
-        TachygramSetPoly::from_iter([Tachygram::from(Fp::from(7))]).commit(),
-        TachygramSetPoly::from_iter([Tachygram::from(Fp::from(3)), Tachygram::from(Fp::from(19))])
+        TachygramSetPoly::try_from_roots([Tachygram::from(Fp::from(7))])
+            .unwrap()
             .commit(),
+        TachygramSetPoly::try_from_roots([
+            Tachygram::from(Fp::from(3)),
+            Tachygram::from(Fp::from(19)),
+        ])
+        .unwrap()
+        .commit(),
     ] {
         let point = commitment.into();
         assert_eq!(bridge_hash(point), app.bridge_hash(point).unwrap());

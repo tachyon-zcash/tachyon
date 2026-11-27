@@ -75,10 +75,12 @@
 //! header fields, need not be fixed before $\zeta$.
 //!
 //! Two distinct polynomials fixed before $\zeta$ agree there only at a root
-//! of their difference. A product of
-//! two slots has degree below $2^{14}$, so one attempt at a false identity of
-//! this degree passes with probability below $2^{14}/p$. These bounds add
-//! across tree steps and prover attempts.
+//! of their difference. For a proving rank $r$, a slot holds $N = 2^r$
+//! coefficients and a product of two slots has degree below $2N$. One attempt
+//! at a false identity of this degree passes with probability below $2N/p$.
+//! These bounds add across tree steps and prover attempts. They cover any
+//! polynomial the rank admits, including a monic set polynomial with at most
+//! $N - 1$ roots.
 //!
 //! Opening at any other point evaluates the committed polynomial there, so a
 //! zero opening proves a root.

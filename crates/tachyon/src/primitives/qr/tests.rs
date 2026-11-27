@@ -85,13 +85,15 @@ fn class_decomposition_requires_distinct_members() {
 }
 
 #[test]
-#[should_panic(expected = "side's set polynomial exceeds WalletRank")]
 fn set_polynomial_needs_one_coefficient_more_than_the_member_count() {
     let discriminant = QrDiscriminant::from(Fp::ZERO);
     let members = (1..=u64::try_from(WalletRank::num_coeffs()).unwrap())
         .map(|root| Tachygram::from(Fp::from(root).square()))
         .collect::<Vec<_>>();
-    let _factors = discriminant.split(&members).factors();
+    assert!(matches!(
+        discriminant.split(&members).factors(),
+        Err(ragu::Error::InvalidWitness(_))
+    ));
 }
 
 #[test]

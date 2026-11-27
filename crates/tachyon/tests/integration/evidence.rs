@@ -33,7 +33,7 @@ fn evidence_tree_admission_rejects_substituted_contents() {
         )
         .unwrap();
     assert!(app.verify_uncompressed(&accepted, &mut *rng).unwrap());
-    let replacement: TachygramSetPoly = iter::once(Tachygram::random(rng)).collect();
+    let replacement = TachygramSetPoly::try_from_roots(iter::once(Tachygram::random(rng))).unwrap();
     let mut forged_header = *bucket.pcd.data();
     forged_header.5 = app.bridge_hash(replacement.commit().into()).unwrap().into();
     let forged = bucket
@@ -158,7 +158,8 @@ fn evidence_tree_joins_reject_mismatched_trees() {
                 epoch1,
                 discriminant,
                 &members,
-            ),
+            )
+            .unwrap(),
         )
         .unwrap();
     let elsewhere = QrIntakeEntry {

@@ -49,7 +49,7 @@ use crate::{
     keys::{ProofAuthorizingKey, private},
     pasta::{EpAffine, EqAffine, Fp},
     primitives::{ActionDigest, ActionSetCommit, Anchor, Tachygram, TachygramSetCommit},
-    serialization::{read_compactsize, write_compactsize},
+    serialization::{compactsize::CompactSize, read_compactsize, write_compactsize},
     stamp::proof::{delegation, pool, spend, spendable},
     value, witness,
 };
@@ -182,11 +182,7 @@ impl Proof for Uncompressed {
         if action_slot != EqAffine::from(header.0) || tachygram_slot != EqAffine::from(header.1) {
             return Ok(false);
         }
-        let compressed = match app.compress(&pcd, rng) {
-            Ok(compressed) => compressed,
-            Err(ragu::Error::InvalidWitness(_)) => return Ok(false),
-            Err(error) => return Err(error),
-        };
+        let compressed = app.compress(&pcd, rng)?;
         app.verify_compressed(&compressed)
     }
 }
@@ -293,7 +289,12 @@ impl<P: Proof> Stamp<P> {
         };
 
         let proof = {
-            let proof_len = usize::try_from(read_compactsize(&mut reader)?)
+            // A full wallet frame can exceed the consensus count limit. Its
+            // length still needs a canonical prefix and the proof-type bound.
+            let prefix = CompactSize::read(&mut reader)?
+                .enforce_canon()
+                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+            let proof_len = usize::try_from(prefix)
                 .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
             if proof_len > P::encoded_len() {
                 return Err(io::Error::new(
@@ -552,8 +553,10 @@ impl Plan {
                         ActionMerge,
                         witness::action_merge(
                             (*left_pcd.data(), *right_pcd.data()),
-                            ActionSetPoly::from_iter(merged_digests.clone()),
-                            TachygramSetPoly::from_iter(merged_tachygrams.clone()),
+                            ActionSetPoly::try_from_roots(merged_digests.iter().copied())
+                                .map_err(ProveError::ProofFailed)?,
+                            TachygramSetPoly::try_from_roots(merged_tachygrams.iter().copied())
+                                .map_err(ProveError::ProofFailed)?,
                         ),
                         left_pcd,
                         right_pcd,
@@ -593,7 +596,8 @@ impl Plan {
                             self.fee,
                             &digests,
                             &tachygrams,
-                        ),
+                        )
+                        .map_err(ProveError::ProofFailed)?,
                         merged_proof.carry::<Actions>(anchor),
                         app.bootstrap_proof().clone().carry::<()>(()),
                     )
@@ -607,10 +611,8 @@ impl Plan {
             .map_err(ProveError::ProofFailed)?
             .into_parts();
         tachygrams.insert(change);
-        let tachygram_set = tachygrams
-            .iter()
-            .copied()
-            .collect::<TachygramSetPoly>()
+        let tachygram_set = TachygramSetPoly::try_from_roots(tachygrams)
+            .map_err(ProveError::ProofFailed)?
             .commit();
         Ok((
             Stamp {
@@ -861,15 +863,8 @@ impl Stamp<Uncompressed> {
         ),
         ragu::Error,
     > {
-        let left_tg_poly = left_tachygrams
-            .iter()
-            .copied()
-            .collect::<TachygramSetPoly>();
-
-        let right_tg_poly = right_tachygrams
-            .iter()
-            .copied()
-            .collect::<TachygramSetPoly>();
+        let left_tg_poly = TachygramSetPoly::try_from_roots(left_tachygrams.iter().copied())?;
+        let right_tg_poly = TachygramSetPoly::try_from_roots(right_tachygrams.iter().copied())?;
 
         let left_bridge = bridge_hash(left_tg_poly.commit().into()).into();
         let right_bridge = bridge_hash(right_tg_poly.commit().into()).into();
@@ -886,8 +881,8 @@ impl Stamp<Uncompressed> {
             TransactionMerge,
             witness::transaction_merge(
                 (*left_pcd.data(), *right_pcd.data()),
-                ActionSetPoly::from_iter(merged_digests.clone()),
-                TachygramSetPoly::from_iter(tachygrams.clone()),
+                ActionSetPoly::try_from_roots(merged_digests.iter().copied())?,
+                TachygramSetPoly::try_from_roots(tachygrams.iter().copied())?,
             ),
             left_pcd,
             right_pcd,
@@ -915,7 +910,7 @@ impl Stamp<Uncompressed> {
         action_digests: impl IntoIterator<Item = ActionDigest>,
         spans: Vec<ragu::Pcd<Pasta, WalletRank, pool::AnchorSpan>>,
     ) -> Result<Self, ragu::Error> {
-        let action_set = action_digests.into_iter().collect::<ActionSetPoly>();
+        let action_set = ActionSetPoly::try_from_roots(action_digests)?;
         let bridge = bridge_hash(self.tachygram_set.into()).into();
         let mut transaction_pcd = self.proof.carry::<Transaction>((bridge, self.anchor));
         for span in spans {
@@ -1059,11 +1054,7 @@ impl Stamp<Uncompressed> {
             ),
         )?;
 
-        let tachygram_set = tachygrams
-            .iter()
-            .copied()
-            .collect::<TachygramSetPoly>()
-            .commit();
+        let tachygram_set = TachygramSetPoly::try_from_roots(tachygrams)?.commit();
         let proof = app
             .rerandomize(
                 merged_proof
@@ -1153,21 +1144,16 @@ impl Stamp<Uncompressed> {
             divisor_digests.insert(descriptor.digest(change));
         }
 
-        let quotient_action_set = digests
-            .difference(&divisor_digests)
-            .copied()
-            .collect::<ActionSetPoly>();
+        let quotient_action_set =
+            ActionSetPoly::try_from_roots(digests.difference(&divisor_digests).copied())?;
 
-        let dividend_tachygram_set = tachygrams_all.iter().copied().collect::<TachygramSetPoly>();
-        let quotient_tachygram_set = tachygrams_all
-            .difference(&divisor_tachygrams)
-            .copied()
-            .collect::<TachygramSetPoly>();
+        let dividend_tachygram_set =
+            TachygramSetPoly::try_from_roots(tachygrams_all.iter().copied())?;
+        let quotient_tachygram_set = TachygramSetPoly::try_from_roots(
+            tachygrams_all.difference(&divisor_tachygrams).copied(),
+        )?;
         let tachygram_set = quotient_tachygram_set.commit();
-        let divisor_tachygram_set = divisor_tachygrams
-            .iter()
-            .copied()
-            .collect::<TachygramSetPoly>();
+        let divisor_tachygram_set = TachygramSetPoly::try_from_roots(divisor_tachygrams)?;
 
         let dividend_bridge = bridge_hash(dividend_tachygram_set.commit().into()).into();
         let divisor_bridge = bridge_hash(divisor_tachygram_set.commit().into()).into();
@@ -1254,7 +1240,7 @@ impl<P: Proof> Stamp<P> {
         app: &App<'_>,
         action_digests: impl IntoIterator<Item = ActionDigest>,
     ) -> Result<bool, ragu::Error> {
-        let action_set = ActionSetPoly::from_iter(action_digests);
+        let action_set = ActionSetPoly::try_from_roots(action_digests)?;
 
         self.proof.verify(
             rng,
