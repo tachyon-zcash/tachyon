@@ -9,7 +9,9 @@
 //! for a [multiset], its fewer than $2^r$ members.
 //! The wrappers accept arbitrary polynomials and points.
 
-use alloc::vec;
+extern crate alloc;
+
+use alloc::{vec, vec::Vec};
 
 use corez::io::{self, Read, Write};
 use derive_more::{AsRef, Debug, Eq as TotalEq, From, Into, PartialEq};
@@ -29,6 +31,16 @@ use crate::{
     pasta::{EpAffine, EqAffine, Fp},
     serialization,
 };
+
+/// A set polynomial's coefficients in ascending degree through its leading
+/// one, as a decompression takes them.
+fn monic_coefficients(poly: &Polynomial<Fp, WalletRank>) -> Vec<Fp> {
+    let len = poly
+        .iter_coeffs()
+        .rposition(|coefficient| coefficient != Fp::ZERO)
+        .map_or(0, |leading| leading + 1);
+    poly.iter_coeffs().take(len).collect()
+}
 
 /// Accumulator of a tachygram set, the Pedersen commitment to its
 /// [`TachygramSetPoly`] ([Injectivity](self#injectivity)).
@@ -159,6 +171,11 @@ impl TachygramSetPoly {
                 .to_affine(),
         )
     }
+
+    /// Coefficients in ascending degree through the leading one.
+    pub(crate) fn coefficients(&self) -> Vec<Fp> {
+        monic_coefficients(&self.0)
+    }
 }
 
 impl ActionSetPoly {
@@ -181,6 +198,11 @@ impl ActionSetPoly {
                 .commit(Pasta::host_generators(pasta::baked()))
                 .to_affine(),
         )
+    }
+
+    /// Coefficients in ascending degree through the leading one.
+    pub(crate) fn coefficients(&self) -> Vec<Fp> {
+        monic_coefficients(&self.0)
     }
 }
 

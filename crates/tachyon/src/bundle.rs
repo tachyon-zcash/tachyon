@@ -115,15 +115,18 @@ use core::{cmp::Ordering, iter, ops::Neg as _};
 
 use corez::io::{self, Read, Write};
 use derive_more::{Debug, Display, Eq as TotalEq, Error, From, IsVariant, PartialEq, TryInto};
+use polynomials::AggregatorRank;
 use ragu::{
-    Rank as _, WalletRank,
+    AcceleratedProver, Application, Rank as _, WalletRank,
+    circuits::polynomials,
     pasta::Pasta,
+    pcd::profile::{Aggregator, Profiled},
     udon::{curve::Affine as _, field::Field as _},
 };
 use rand_core::CryptoRng;
 
 use crate::{
-    ActionDigest, Note, Tachygram, TachygramSetCommit, TachygramSetPoly, action,
+    ActionDigest, ActionSetPoly, Note, Tachygram, TachygramSetCommit, TachygramSetPoly, action,
     digest::blake2b,
     fee,
     keys::{private, public},
@@ -131,8 +134,8 @@ use crate::{
     primitives::{Anchor, effect},
     reddsa, serialization,
     stamp::{
-        self, Stamp, StampState,
-        proof::{App, pool},
+        self, AggregatorProof, Stamp, StampState,
+        proof::{App, HEADER_SIZE, pool, transaction::Transaction},
     },
     value,
 };
@@ -736,6 +739,74 @@ impl Bundle<Stamp<stamp::Compressed>> {
         }
         Ok(bundle)
     }
+
+    /// Import the wallet publication at aggregator rank, with
+    /// both set polynomials rebuilt from this bundle and its adjuncts.
+    ///
+    /// # Errors
+    ///
+    /// Returns a Ragu error if the witness cannot be encoded or the frame
+    /// cannot be imported with the supplied coefficients.
+    ///
+    /// # Panics
+    ///
+    /// Panics when digesting a hand-built bundle holding an identity `cv` or
+    /// `rk`.
+    pub fn decompress<RNG: CryptoRng>(
+        &self,
+        rng: &mut RNG,
+        app: &Application<
+            '_,
+            Profiled<Pasta, Aggregator<HEADER_SIZE>>,
+            AggregatorRank,
+            HEADER_SIZE,
+            AcceleratedProver,
+        >,
+        adjuncts: &[&Bundle<()>],
+    ) -> ragu::Result<AggregatorProof> {
+        let bodies = iter::once((&self.actions, self.fee, self.fee_auth)).chain(
+            adjuncts
+                .iter()
+                .map(|body| (&body.actions, body.fee, body.fee_auth)),
+        );
+        let mut actions = Vec::new();
+        let mut tachygrams = Vec::new();
+        for (records, fee, change) in bodies {
+            actions.extend(records.iter().map(action::Action::digest));
+            actions.push(fee.digest(change));
+            tachygrams.extend(
+                records
+                    .iter()
+                    .flat_map(|action| <[Tachygram; 2]>::from(action.tachygrams)),
+            );
+            tachygrams.push(change);
+        }
+        let bridge = app
+            .context()
+            .wallet()
+            .bridge_hash(self.stamp.tachygram_set.into())?
+            .into();
+        let frame = self
+            .stamp
+            .proof
+            .as_ref()
+            .clone()
+            .carry::<Transaction>((bridge, self.stamp.anchor));
+        let pcd = app.decompress_with_polynomials(
+            rng,
+            &frame,
+            [
+                ActionSetPoly::try_from_roots(actions.iter().copied())?.coefficients(),
+                TachygramSetPoly::try_from_roots(tachygrams.iter().copied())?.coefficients(),
+            ],
+        )?;
+        Ok(AggregatorProof {
+            pcd,
+            adjuncts: self.stamp.adjuncts.clone(),
+            actions,
+            tachygrams,
+        })
+    }
 }
 
 impl<P: stamp::Proof> Bundle<Stamp<P>> {
@@ -833,15 +904,15 @@ impl<P: stamp::Proof> Bundle<Stamp<P>> {
             digests.push(fee_descriptor.digest(cm_change));
         }
 
-        let tachygram_set = TachygramSetPoly::try_from_roots(covered_tachygrams)
-            .map_err(|_capacity| VerifyCoverageError::WrongTachygramSet)?
-            .commit();
-
-        if self.stamp.tachygram_set != tachygram_set {
+        if self.stamp.tachygram_set
+            != TachygramSetPoly::try_from_roots(covered_tachygrams)
+                .map_err(|_capacity| VerifyCoverageError::WrongTachygramSet)?
+                .commit()
+        {
             return Err(VerifyCoverageError::WrongTachygramSet);
         }
 
-        Ok((digests, tachygram_set))
+        Ok((digests, self.stamp.tachygram_set))
     }
 
     /// Verify the stamp's proof against the given action digests, which
